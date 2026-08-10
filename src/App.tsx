@@ -13,7 +13,7 @@ import { Footer } from './components/Footer';
 import { Toast } from './components/Toast';
 import { LegalModal } from './components/LegalModal';
 import { AliceEgePlayerModal } from './components/AliceEgePlayerModal';
-import { getCurrentUser, setCurrentUser as saveCurrentUser } from './utils/adminAuth';
+import { checkAdminByTelegramId, getCurrentUser, setCurrentUser as saveCurrentUser } from './utils/adminAuth';
 import { setupTokenRefresh, stopTokenRefresh } from './utils/auth-api-client';
 
 export default function App() {
@@ -26,11 +26,117 @@ export default function App() {
   const [legalModalType, setLegalModalType] = useState<'privacy' | 'terms' | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(() => getCurrentUser());
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem('ege_network_theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch {
+      return 'light';
+    }
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    try {
+      localStorage.setItem('ege_network_theme', theme);
+    } catch {}
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
   // Инициализация автоматического обновления токена
   useEffect(() => {
     setupTokenRefresh();
     return () => stopTokenRefresh();
+  }, []);
+
+  useEffect(() => {
+    const consumeTelegramAuthResult = () => {
+      const hashRaw = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+      const hashParams = new URLSearchParams(hashRaw);
+      const searchParams = new URLSearchParams(window.location.search);
+      const getTelegramParam = (key: string): string => hashParams.get(key) || searchParams.get(key) || '';
+
+      const directTelegramId = getTelegramParam('id');
+      const directTelegramAuthDate = getTelegramParam('auth_date');
+      const directTelegramHash = getTelegramParam('hash');
+      const hasAuthError = Boolean(searchParams.get('tgAuthError'));
+
+      // Fallback for Telegram widget flows that return raw auth params to the current page.
+      if (directTelegramId && directTelegramAuthDate && directTelegramHash && !hasAuthError) {
+        const callbackUrl = new URL('/api/auth/telegram/callback', window.location.origin);
+        searchParams.forEach((val, key) => callbackUrl.searchParams.set(key, val));
+        hashParams.forEach((val, key) => {
+          if (!callbackUrl.searchParams.has(key)) callbackUrl.searchParams.set(key, val);
+        });
+
+        const returnTo = `${window.location.origin}${window.location.pathname}`;
+        callbackUrl.searchParams.set('return_to', returnTo);
+
+        // Clean current URL before replacing to prevent infinite loops
+        const cleanUrl = new URL(window.location.href);
+        ['id', 'auth_date', 'hash', 'first_name', 'last_name', 'username', 'photo_url'].forEach((k) => cleanUrl.searchParams.delete(k));
+        window.history.replaceState(null, '', cleanUrl.toString());
+
+        window.location.replace(callbackUrl.toString());
+        return;
+      }
+
+      const authResult = hashParams.get('tgAuthResult') || searchParams.get('tgAuthResult');
+
+      if (!authResult) return;
+
+      try {
+        const encoded = decodeURIComponent(authResult).replace(/-/g, '+').replace(/_/g, '/');
+        const padded = encoded + '='.repeat((4 - (encoded.length % 4)) % 4);
+        const telegramUser = JSON.parse(window.atob(padded));
+        const telegramId = String(telegramUser.id);
+        const adminStaff = checkAdminByTelegramId(telegramId);
+        const authenticatedUser: User = {
+          id: `usr-${telegramId}`,
+          name: telegramUser.first_name + (telegramUser.last_name ? ` ${telegramUser.last_name}` : ''),
+          telegramId,
+          role: adminStaff ? adminStaff.role : 'user',
+          avatar: telegramUser.photo_url,
+          status: 'active',
+          registeredAt: new Date().toISOString().split('T')[0],
+          authMethod: 'telegram',
+        };
+
+        saveCurrentUser(authenticatedUser);
+        setCurrentUser(authenticatedUser);
+        setIsAuthOpen(false);
+        setActivePage('dashboard');
+
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.delete('tgAuthResult');
+        if (nextUrl.hash.includes('tgAuthResult=')) {
+          const currentHashRaw = nextUrl.hash.startsWith('#') ? nextUrl.hash.slice(1) : nextUrl.hash;
+          const currentHashParams = new URLSearchParams(currentHashRaw);
+          currentHashParams.delete('tgAuthResult');
+          const cleanedHash = currentHashParams.toString();
+          nextUrl.hash = cleanedHash ? `#${cleanedHash}` : '';
+        }
+
+        window.history.replaceState(null, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+      } catch (error) {
+        console.error('Failed to restore Telegram auth result:', error);
+      }
+    };
+
+    consumeTelegramAuthResult();
+    window.addEventListener('hashchange', consumeTelegramAuthResult);
+
+    return () => {
+      window.removeEventListener('hashchange', consumeTelegramAuthResult);
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -39,6 +145,27 @@ export default function App() {
       setToastMessage(null);
     }, 3500);
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tgAuthError = params.get('tgAuthError');
+    if (!tgAuthError) return;
+
+    const messageByCode: Record<string, string> = {
+      bot_token_missing: 'Telegram вход временно недоступен: не настроен bot token.',
+      missing_params: 'Telegram вход не завершен. Повторите попытку еще раз.',
+      bad_auth_date: 'Telegram вернул некорректное время авторизации. Повторите вход.',
+      expired_auth: 'Сессия Telegram истекла. Выполните вход заново.',
+      invalid_hash: 'Ошибка проверки Telegram-подписи. Проверьте домен и токен бота.',
+      server_error: 'Внутренняя ошибка Telegram входа. Попробуйте позже.',
+    };
+
+    showToast(messageByCode[tgAuthError] || `Ошибка Telegram входа: ${tgAuthError}`);
+
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete('tgAuthError');
+    window.history.replaceState(null, '', cleanUrl.toString());
+  }, []);
 
   const handleAddToCart = (newItem: Omit<CartItem, 'id'>) => {
     const itemWithId: CartItem = {
@@ -86,6 +213,8 @@ export default function App() {
           onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
           currentUser={currentUser}
           onLogout={handleLogout}
+          theme={theme}
+          onToggleTheme={toggleTheme}
         />
       )}
 

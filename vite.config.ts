@@ -32,6 +32,7 @@ export default defineConfig(() => {
       },
     },
     server: {
+      allowedHosts: ['egenetwork11.com', 'www.egenetwork11.com'],
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },

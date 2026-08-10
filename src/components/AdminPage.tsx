@@ -582,7 +582,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onExitAdmin, 
           <div className="space-y-2">
             <h2 className="text-2xl font-black tracking-tight">Доступ ограничен</h2>
             <p className="text-sm text-slate-400">
-              Панель администратора доступна только при входе под авторизованным Telegram ID (например, <code className="text-emerald-400 font-mono font-bold">7948060541</code>).
+              Панель администратора доступна только при входе под авторизованным Telegram ID главного администратора.
             </p>
           </div>
           <button
@@ -640,7 +640,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onExitAdmin, 
 
           <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Telegram ID: <strong className="text-white font-mono">{currentUser?.telegramId || '7948060541'}</strong></span>
+            <span>Telegram ID: <strong className="text-white font-mono">{currentUser?.telegramId || '—'}</strong></span>
           </div>
 
           <div className="flex items-center gap-2.5 bg-purple-950/40 border border-purple-800/50 rounded-xl py-1 px-3">
@@ -925,7 +925,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ currentUser, onExitAdmin, 
               <div className="p-4 rounded-2xl bg-purple-950/40 border border-purple-800/40 text-purple-200 text-xs sm:text-sm space-y-1">
                 <div className="font-bold flex items-center gap-2 text-white">
                   <Lock className="w-4 h-4 text-purple-400" />
-                  Главный Администратор Telegram ID: <code className="bg-purple-900/60 px-2 py-0.5 rounded text-emerald-300 font-mono font-black text-sm">7948060541</code>
+                  Главный Администратор (системная роль)
                 </div>
                 <p className="text-slate-300">
                   Этот Telegram ID всегда обладает правами Главного администратора и не может быть удален.

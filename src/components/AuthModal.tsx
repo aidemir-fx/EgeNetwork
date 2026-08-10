@@ -13,7 +13,7 @@ import {
 import { User } from '../types';
 import { checkAdminByTelegramId, setCurrentUser } from '../utils/adminAuth';
 import { authAPI, validators } from '../utils/auth-api-client';
-import { addSystemLog, getStoredSettings, registerOrUpdateUser } from '../utils/adminStore';
+import { addSystemLog, getStoredSettings } from '../utils/adminStore';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -33,15 +33,182 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, showToast
   const [nameInput, setNameInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [tgInput, setTgInput] = useState('');
-  const [showTgIdInput, setShowTgIdInput] = useState(false);
   const [copied, setCopied] = useState(false);
   const widgetRef = useRef<HTMLDivElement>(null);
+  const lastVerifyFingerprintRef = useRef<string>('');
 
-  const defaultTelegramBotLink = 'https://t.me/egemanager';
+  const defaultTelegramBotLink = 'https://t.me/EgeNetwork11_bot';
   const siteSettings = getStoredSettings();
   const authBotLink = siteSettings.telegramBotLink?.trim() || defaultTelegramBotLink;
   const botUsername = authBotLink.replace(/^https?:\/\/t\.me\//, '').replace(/^@/, '').trim();
+
+  const sendTelegramDebug = (event: string, details: Record<string, unknown> = {}) => {
+    try {
+      fetch('/api/auth/telegram/debug', {
+        method: 'POST',
+        credentials: 'include',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          event,
+          source: 'auth-modal',
+          details,
+        }),
+      }).catch(() => undefined);
+    } catch {
+      // Silent debug failure.
+    }
+  };
+
+  const parseTelegramQueryLikeString = (raw: string): Record<string, string> => {
+    const cleaned = raw.trim().replace(/^[?#]/, '');
+    const params = new URLSearchParams(cleaned);
+    const result: Record<string, string> = {};
+    params.forEach((value, key) => {
+      result[key] = value;
+    });
+    return result;
+  };
+
+  const normalizeTelegramCandidate = (candidate: any): Record<string, unknown> | null => {
+    if (!candidate) return null;
+
+    if (typeof candidate === 'string') {
+      const text = candidate.trim();
+
+      try {
+        const parsed = JSON.parse(text);
+        return normalizeTelegramCandidate(parsed);
+      } catch {
+        // Not JSON, continue with query-like parsing.
+      }
+
+      const fromQuery = parseTelegramQueryLikeString(text);
+      if (fromQuery.auth_data) {
+        return normalizeTelegramCandidate(fromQuery.auth_data);
+      }
+
+      const nestedUser = fromQuery.user;
+      if (nestedUser) {
+        return normalizeTelegramCandidate(nestedUser);
+      }
+
+      return Object.keys(fromQuery).length ? fromQuery : null;
+    }
+
+    if (typeof candidate === 'object') {
+      const rawObj = candidate as Record<string, unknown>;
+
+      if (typeof rawObj.auth_data === 'string') {
+        return normalizeTelegramCandidate(rawObj.auth_data);
+      }
+
+      if (rawObj.user) {
+        return normalizeTelegramCandidate(rawObj.user);
+      }
+
+      return rawObj;
+    }
+
+    return null;
+  };
+
+  const verifyTelegramAndLogin = async (rawUser: any) => {
+    const normalized = normalizeTelegramCandidate(rawUser) || {};
+
+    const id = normalized?.id != null ? String(normalized.id) : '';
+    const authDate = normalized?.auth_date != null ? String(normalized.auth_date) : '';
+    const hash = typeof normalized?.hash === 'string' ? normalized.hash : '';
+    const fingerprint = `${id}:${authDate}:${hash}`;
+
+    if (fingerprint === lastVerifyFingerprintRef.current && id && authDate && hash) {
+      sendTelegramDebug('verify-duplicate-skip', {
+        hasId: true,
+        hasAuthDate: true,
+        hasHash: true,
+      });
+      return;
+    }
+
+    sendTelegramDebug('verify-start', {
+      hasId: Boolean(id),
+      hasAuthDate: Boolean(authDate),
+      hasHash: Boolean(hash),
+      hasUsername: Boolean(normalized?.username),
+    });
+
+    if (!id || !authDate || !hash) {
+      sendTelegramDebug('verify-missing-params', {
+        hasId: Boolean(id),
+        hasAuthDate: Boolean(authDate),
+        hasHash: Boolean(hash),
+      });
+      showToast('Telegram не передал подпись входа. Повторите попытку.');
+      return;
+    }
+
+    showToast('Подтверждаем вход через Telegram...');
+    lastVerifyFingerprintRef.current = fingerprint;
+    const verifyResponse = await fetch('/api/auth/telegram/verify', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(normalized),
+    });
+
+    const verifyResult = await verifyResponse.json().catch(() => ({} as any));
+    if (!verifyResponse.ok || !verifyResult?.success || !verifyResult?.user) {
+      const code = typeof verifyResult?.error === 'string' ? verifyResult.error : 'server_error';
+      lastVerifyFingerprintRef.current = '';
+      sendTelegramDebug('verify-failed', {
+        status: verifyResponse.status,
+        code,
+      });
+      const messageByCode: Record<string, string> = {
+        bot_token_missing: 'Telegram вход временно недоступен: не настроен bot token.',
+        missing_params: 'Telegram вход не завершен. Повторите попытку еще раз.',
+        bad_auth_date: 'Telegram вернул некорректное время авторизации. Повторите вход.',
+        expired_auth: 'Сессия Telegram истекла. Выполните вход заново.',
+        invalid_hash: 'Ошибка проверки Telegram-подписи. Проверьте домен и токен бота.',
+        server_error: 'Внутренняя ошибка Telegram входа. Попробуйте позже.',
+      };
+      showToast(messageByCode[code] || `Ошибка Telegram входа: ${code}`);
+      return;
+    }
+
+    const verifiedUser = verifyResult.user;
+    sendTelegramDebug('verify-success', {
+      userId: String(verifiedUser.id || ''),
+      hasUsername: Boolean(verifiedUser.username),
+    });
+    const tgIdStr = String(verifiedUser.id);
+    const adminStaff = checkAdminByTelegramId(tgIdStr);
+
+    const authenticatedUser: User = {
+      id: `usr-${tgIdStr}`,
+      name: verifiedUser.first_name + (verifiedUser.last_name ? ` ${verifiedUser.last_name}` : ''),
+      telegramId: tgIdStr,
+      role: adminStaff ? adminStaff.role : 'user',
+      avatar: verifiedUser.photo_url,
+      status: 'active',
+      registeredAt: new Date().toISOString().split('T')[0],
+      authMethod: 'telegram',
+    };
+
+    setCurrentUser(authenticatedUser);
+    addSystemLog(
+      adminStaff ? 'Вход администратора (Widget)' : 'Авторизация (Widget)',
+      `Пользователь @${verifiedUser.username || tgIdStr} вошел через Telegram Widget`,
+      tgIdStr
+    );
+    onLoginSuccess(authenticatedUser);
+    showToast(`Успешная авторизация через Telegram (@${verifiedUser.username || verifiedUser.first_name})`);
+    onClose();
+  };
 
   useEffect(() => {
     if (isOpen && window.Telegram?.WebApp?.initDataUnsafe?.user) {
@@ -71,40 +238,57 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, showToast
   useEffect(() => {
     if (!isOpen) return;
 
-    window.onTelegramAuth = (user) => {
+    window.onTelegramAuth = async (user) => {
       try {
-        const tgIdStr = String(user.id);
-        const adminStaff = checkAdminByTelegramId(tgIdStr);
-
-        const authenticatedUser: User = {
-          id: `usr-${tgIdStr}`,
-          name: user.first_name + (user.last_name ? ` ${user.last_name}` : ''),
-          telegramId: tgIdStr,
-          role: adminStaff ? adminStaff.role : 'user',
-          avatar: user.photo_url,
-          status: 'active',
-          registeredAt: new Date().toISOString().split('T')[0],
-          authMethod: 'telegram',
-        };
-
-        setCurrentUser(authenticatedUser);
-        registerOrUpdateUser(authenticatedUser);
-        addSystemLog(
-          adminStaff ? 'Вход администратора (Widget)' : 'Авторизация (Widget)',
-          `Пользователь @${user.username || tgIdStr} вошел через Telegram Widget`,
-          tgIdStr
-        );
-        onLoginSuccess(authenticatedUser);
-        showToast(`Успешная авторизация через Telegram (@${user.username || user.first_name})`);
-        onClose();
+        sendTelegramDebug('onauth-invoked', {
+          hasUser: Boolean(user),
+          hasId: Boolean(user?.id),
+          hasAuthDate: Boolean(user?.auth_date),
+          hasHash: Boolean(user?.hash),
+        });
+        await verifyTelegramAndLogin(user);
       } catch (err) {
         console.error('Telegram auth error:', err);
+        sendTelegramDebug('onauth-error', {
+          message: err instanceof Error ? err.message : 'unknown_error',
+        });
         showToast('Ошибка при авторизации через Telegram');
       }
     };
 
+    const onTelegramMessage = (event: MessageEvent) => {
+      if (event.origin !== 'https://oauth.telegram.org') return;
+
+      const rawData = typeof event.data === 'string' ? event.data : JSON.stringify(event.data || {});
+      sendTelegramDebug('postmessage-received', {
+        origin: event.origin,
+        dataType: typeof event.data,
+        sample: rawData.slice(0, 120),
+      });
+
+      const candidate = normalizeTelegramCandidate(event.data as any);
+      if (!candidate || !candidate.id) {
+        sendTelegramDebug('postmessage-no-id', {
+          dataType: typeof event.data,
+        });
+        return;
+      }
+      verifyTelegramAndLogin(candidate).catch((error) => {
+        console.error('Telegram postMessage auth error:', error);
+        sendTelegramDebug('postmessage-verify-error', {
+          message: error instanceof Error ? error.message : 'unknown_error',
+        });
+      });
+    };
+
+    window.addEventListener('message', onTelegramMessage);
+
     try {
       if (widgetRef.current && botUsername) {
+        sendTelegramDebug('widget-init', {
+          botUsername,
+          location: window.location.href,
+        });
         widgetRef.current.innerHTML = '';
         const script = document.createElement('script');
         script.src = 'https://telegram.org/js/telegram-widget.js?22';
@@ -119,6 +303,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, showToast
     } catch (err) {
       console.warn('Telegram widget loading skipped or failed:', err);
     }
+
+    return () => {
+      window.removeEventListener('message', onTelegramMessage);
+    };
   }, [isOpen, botUsername]);
 
   const handleEmailRegister = async (e: React.FormEvent) => {
@@ -236,37 +424,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, showToast
     setMode('login');
   };
 
-  const handleTelegramIdSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleaned = tgInput.trim().replace(/^@/, '');
-    if (!cleaned) {
-      showToast('Введите ваш Telegram ID');
-      return;
-    }
-
-    const adminStaff = checkAdminByTelegramId(cleaned);
-    const authenticatedUser: User = {
-      id: `usr-${cleaned}`,
-      name: adminStaff ? adminStaff.name : `Пользователь (@${cleaned})`,
-      telegramId: cleaned,
-      role: adminStaff ? adminStaff.role : 'user',
-      status: 'active',
-      registeredAt: new Date().toISOString().split('T')[0],
-      authMethod: 'telegram',
-    };
-
-    setCurrentUser(authenticatedUser);
-    registerOrUpdateUser(authenticatedUser);
-    addSystemLog(
-      adminStaff ? 'Вход администратора' : 'Авторизация пользователя',
-      `Пользователь @${cleaned} вошел в систему`,
-      cleaned
-    );
-    onLoginSuccess(authenticatedUser);
-    showToast(`Успешный вход через Telegram ID: ${cleaned}`);
-    onClose();
-  };
-
   const handleCopy = () => {
     navigator.clipboard.writeText(authBotLink);
     setCopied(true);
@@ -331,15 +488,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, showToast
         </div>
 
         {authTab === 'telegram' && (
-          <>
-            <div className="flex flex-col items-center justify-center py-2 min-h-[50px] bg-slate-50/80 rounded-2xl border border-slate-200/80 p-3">
+          <div className="space-y-4">
+            <div className="flex flex-col items-center justify-center py-3 min-h-[60px] bg-slate-50/80 rounded-2xl border border-slate-200/80 p-3">
               <div ref={widgetRef} className="flex justify-center" />
               <p className="text-[10px] text-slate-400 font-medium mt-2 text-center">
                 Нажмите «Log in with Telegram» для входа
               </p>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               <a
                 href={authBotLink}
                 target="_blank"
@@ -350,48 +507,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, showToast
                 <span>Перейти в Telegram Бот (@{botUsername})</span>
               </a>
 
-              {!showTgIdInput ? (
-                <button
-                  onClick={() => setShowTgIdInput(true)}
-                  className="w-full py-2 text-center text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-                >
-                  Ввести Telegram ID вручную ↵
-                </button>
-              ) : (
-                <form onSubmit={handleTelegramIdSubmit} className="pt-2 space-y-2 border-t border-slate-100">
-                  <label className="block text-xs font-bold text-slate-700">Telegram ID или @username</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={tgInput}
-                      onChange={(e) => setTgInput(e.target.value)}
-                      placeholder="Например: 7948060541"
-                      className="flex-1 px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs text-slate-900 focus:outline-none focus:border-sky-500 font-mono"
-                      required
-                    />
-                    <button
-                      type="submit"
-                      className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition-all cursor-pointer"
-                    >
-                      Войти
-                    </button>
-                  </div>
-                </form>
-              )}
+              <button
+                type="button"
+                onClick={handleCopy}
+                className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border cursor-pointer ${
+                  copied
+                    ? 'bg-[#FF6B35] text-white border-[#FF6B35]'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copied ? 'Ссылка скопирована' : 'Скопировать ссылку на бот'}</span>
+              </button>
             </div>
-
-            <button
-              onClick={handleCopy}
-              className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border cursor-pointer ${
-                copied
-                  ? 'bg-[#FF6B35] text-white border-[#FF6B35]'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied ? 'Ссылка скопирована' : 'Скопировать ссылку'}</span>
-            </button>
-          </>
+          </div>
         )}
 
         {authTab === 'email' && (

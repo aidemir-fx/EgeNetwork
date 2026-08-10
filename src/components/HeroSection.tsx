@@ -24,7 +24,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 
             {/* Main Headline */}
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-slate-900 tracking-tight leading-[1.08]">
-              Сливы курсов ЕГЭ от топовых онлайн школ по самым низким ценам
+              СЛИВЫ КУРСОВ <span className="text-[#FF6B35]">ЕГЭ</span>
             </h1>
 
             {/* Description */}

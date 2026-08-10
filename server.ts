@@ -15,19 +15,35 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env.example') });
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '32kb' }));
 
 // Helmet с исключением для Vite в dev режиме
 if (process.env.NODE_ENV === 'production') {
-  app.use(helmet());
+  app.use(
+    helmet({
+      crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+      contentSecurityPolicy: {
+        directives: {
+          scriptSrc: ["'self'", "'unsafe-eval'", 'https://telegram.org', 'https://oauth.telegram.org'],
+          frameSrc: ["'self'", 'https://oauth.telegram.org', 'https://telegram.org'],
+          connectSrc: ["'self'", 'https://telegram.org', 'https://oauth.telegram.org'],
+          imgSrc: ["'self'", 'data:', 'https://telegram.org', 'https://*.telegram.org', 'https://images.unsplash.com'],
+        },
+      },
+    })
+  );
 } else {
   // В dev режиме отключаем CSP чтобы Vite работал нормально
   app.use(helmet({ contentSecurityPolicy: false }));
 }
 
 app.use(cors({ origin: process.env.APP_URL, credentials: true }));
-app.use(express.json());
 app.use(cookieParser());
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
 
 // Debug: Check if authRoutes is loaded
 console.log('[Auth] Registering auth routes at /api/auth');

@@ -13,14 +13,26 @@ import nodemailer from 'nodemailer';
 import validator from 'validator';
 import rateLimit from 'express-rate-limit';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { DatabaseSync } from 'node:sqlite';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 // ============================================
 // КОНФИГУРАЦИЯ
 // ============================================
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-refresh-secret';
+const isProduction = process.env.NODE_ENV === 'production';
+const JWT_SECRET = process.env.JWT_SECRET || (isProduction ? '' : 'dev-access-secret');
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || (isProduction ? '' : 'dev-refresh-secret');
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const getTelegramBotToken = (): string => (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+
+if (isProduction && (!JWT_SECRET || !JWT_REFRESH_SECRET)) {
+  throw new Error('JWT_SECRET and JWT_REFRESH_SECRET must be configured in production');
+}
 
 // Email конфиг (Используй свой SMTP сервис)
 const emailTransporter = nodemailer.createTransport({
@@ -52,8 +64,85 @@ interface UserDocument {
   createdAt: string;
 }
 
-// Имитация БД (в production используй MongoDB/PostgreSQL)
-const USERS_DB: Map<string, UserDocument> = new Map();
+// SQLite-файл лежит в data, которая сохраняется Docker volume.
+const authDatabasePath = process.env.AUTH_DB_PATH || path.resolve(process.cwd(), 'data/auth.sqlite');
+fs.mkdirSync(path.dirname(authDatabasePath), { recursive: true });
+const authDatabase = new DatabaseSync(authDatabasePath);
+authDatabase.exec(`
+  PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    verification_token TEXT,
+    verification_token_expiry INTEGER,
+    reset_token TEXT,
+    reset_token_expiry INTEGER,
+    last_login_at TEXT,
+    login_attempts INTEGER NOT NULL DEFAULT 0,
+    lock_until INTEGER,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL
+  );
+`);
+
+const findUserByEmail = authDatabase.prepare('SELECT * FROM users WHERE email = ?');
+const findUserById = authDatabase.prepare('SELECT * FROM users WHERE id = ?');
+const findUserByVerificationToken = authDatabase.prepare(
+  'SELECT * FROM users WHERE verification_token = ? AND verification_token_expiry > ?'
+);
+const findUserByResetToken = authDatabase.prepare(
+  'SELECT * FROM users WHERE reset_token = ? AND reset_token_expiry > ?'
+);
+const insertUser = authDatabase.prepare(`
+  INSERT INTO users (
+    id, email, name, password_hash, email_verified, verification_token,
+    verification_token_expiry, login_attempts, status, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const updateUser = authDatabase.prepare(`
+  UPDATE users SET
+    email_verified = ?, verification_token = ?, verification_token_expiry = ?,
+    reset_token = ?, reset_token_expiry = ?, last_login_at = ?,
+    login_attempts = ?, lock_until = ?, password_hash = ?, status = ?
+  WHERE id = ?
+`);
+
+const mapUser = (row: any): UserDocument => ({
+  id: row.id,
+  email: row.email,
+  name: row.name,
+  passwordHash: row.password_hash,
+  emailVerified: Boolean(row.email_verified),
+  verificationToken: row.verification_token || undefined,
+  verificationTokenExpiry: row.verification_token_expiry || undefined,
+  resetToken: row.reset_token || undefined,
+  resetTokenExpiry: row.reset_token_expiry || undefined,
+  lastLoginAt: row.last_login_at || undefined,
+  loginAttempts: row.login_attempts,
+  lockUntil: row.lock_until || undefined,
+  status: row.status,
+  createdAt: row.created_at,
+});
+
+const saveUser = (user: UserDocument): void => {
+  updateUser.run(
+    user.emailVerified ? 1 : 0,
+    user.verificationToken ?? null,
+    user.verificationTokenExpiry ?? null,
+    user.resetToken ?? null,
+    user.resetTokenExpiry ?? null,
+    user.lastLoginAt ?? null,
+    user.loginAttempts,
+    user.lockUntil ?? null,
+    user.passwordHash,
+    user.status,
+    user.id
+  );
+};
 
 // ============================================
 // УТИЛИТЫ
@@ -82,6 +171,137 @@ const hashPassword = async (password: string): Promise<string> => {
 
 const verifyPassword = async (password: string, hash: string): Promise<boolean> => {
   return bcryptjs.compare(password, hash);
+};
+
+type TelegramAuthInput = Record<string, unknown>;
+
+type TelegramVerifyResult =
+  | {
+      success: true;
+      payload: {
+        id: number;
+        first_name: string;
+        last_name?: string;
+        username?: string;
+        photo_url?: string;
+      };
+    }
+  | {
+      success: false;
+      code: 'bot_token_missing' | 'missing_params' | 'bad_auth_date' | 'expired_auth' | 'invalid_hash';
+    };
+
+const verifyTelegramAuthData = (input: Record<string, unknown>): TelegramVerifyResult => {
+  const botToken = getTelegramBotToken();
+  if (!botToken) {
+    console.warn('[TelegramAuth] TELEGRAM_BOT_TOKEN is missing in environment variables (.env)');
+    return { success: false, code: 'bot_token_missing' };
+  }
+
+  const id = input.id != null ? String(input.id).trim() : '';
+  const authDate = input.auth_date != null ? String(input.auth_date).trim() : '';
+  const hash = typeof input.hash === 'string' ? input.hash.trim() : '';
+
+  if (!id || !authDate || !hash) {
+    return { success: false, code: 'missing_params' };
+  }
+
+  const authDateSec = Number.parseInt(authDate, 10);
+  if (!Number.isFinite(authDateSec)) {
+    return { success: false, code: 'bad_auth_date' };
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSec - authDateSec) > 86400) {
+    return { success: false, code: 'expired_auth' };
+  }
+
+  // Official Telegram fields used in check_string HMAC calculation
+  const ALLOWED_TELEGRAM_KEYS = [
+    'allows_write_to_pm',
+    'auth_date',
+    'first_name',
+    'id',
+    'last_name',
+    'photo_url',
+    'username',
+  ];
+
+  const computeHash = (dataCheckString: string): string => {
+    const secretKey = crypto.createHash('sha256').update(botToken).digest();
+    return crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+  };
+
+  const safeCompare = (calcHash: string, targetHash: string): boolean => {
+    const a = Buffer.from(calcHash, 'hex');
+    const b = Buffer.from(targetHash, 'hex');
+    return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+  };
+
+  const rawEntries: [string, string][] = [];
+  for (const key of ALLOWED_TELEGRAM_KEYS) {
+    const val = input[key];
+    if (val !== undefined && val !== null && val !== '') {
+      rawEntries.push([key, String(val)]);
+    }
+  }
+
+  // Generate variants for allows_write_to_pm normalization
+  const variants: [string, string][][] = [];
+
+  // Variant 1: As provided
+  variants.push([...rawEntries]);
+
+  // Variant 2: Normalizing allows_write_to_pm if present
+  if (rawEntries.some(([k]) => k === 'allows_write_to_pm')) {
+    variants.push(
+      rawEntries.map(([k, v]) => (k === 'allows_write_to_pm' ? [k, '1'] : [k, v]))
+    );
+    variants.push(
+      rawEntries.map(([k, v]) => (k === 'allows_write_to_pm' ? [k, 'true'] : [k, v]))
+    );
+    variants.push(
+      rawEntries.filter(([k]) => k !== 'allows_write_to_pm')
+    );
+  }
+
+  let matched = false;
+
+  for (const variant of variants) {
+    variant.sort(([a], [b]) => a.localeCompare(b));
+    const checkString = variant.map(([k, v]) => `${k}=${v}`).join('\n');
+    const calcHash = computeHash(checkString);
+    if (safeCompare(calcHash, hash)) {
+      matched = true;
+      break;
+    }
+  }
+
+  if (!matched) {
+    console.warn('[TelegramAuth] Hash mismatch for input:', {
+      id,
+      username: input.username || null,
+      authDate,
+      hasHash: Boolean(hash),
+    });
+    return { success: false, code: 'invalid_hash' };
+  }
+
+  const firstName = typeof input.first_name === 'string' ? input.first_name : String(input.first_name || '');
+  const lastName = typeof input.last_name === 'string' && input.last_name ? input.last_name : undefined;
+  const username = typeof input.username === 'string' && input.username ? input.username : undefined;
+  const photoUrl = typeof input.photo_url === 'string' && input.photo_url ? input.photo_url : undefined;
+
+  return {
+    success: true,
+    payload: {
+      id: Number(id),
+      first_name: firstName,
+      last_name: lastName,
+      username,
+      photo_url: photoUrl,
+    },
+  };
 };
 
 // ============================================
@@ -167,7 +387,22 @@ const loginLimiter = rateLimit({
   message: 'Слишком много неудачных попыток входа. Попробуйте позже.',
   standardHeaders: false,
   legacyHeaders: false,
-  skip: (req) => !req.body?.email, // Пропустить если нет email
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Слишком много регистраций. Попробуйте позже.' },
+});
+
+const recoveryLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Слишком много запросов. Попробуйте позже.' },
 });
 
 // ============================================
@@ -176,8 +411,146 @@ const loginLimiter = rateLimit({
 
 const router = express.Router();
 
+// POST /api/auth/telegram/debug
+router.post('/telegram/debug', (req: Request, res: Response) => {
+  try {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const event = typeof body.event === 'string' ? body.event : 'unknown';
+    const source = typeof body.source === 'string' ? body.source : 'client';
+    const details = typeof body.details === 'object' && body.details !== null ? body.details : {};
+
+    console.info('[TelegramAuth] debug', {
+      event,
+      source,
+      host: req.hostname,
+      details,
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Telegram debug logging error:', error);
+    return res.status(500).json({ success: false });
+  }
+});
+
+// POST /api/auth/telegram/verify
+router.post('/telegram/verify', (req: Request, res: Response) => {
+  try {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const verification = verifyTelegramAuthData(body);
+    if (!verification.success) {
+      console.warn('[TelegramAuth] verify rejected', {
+        code: verification.code,
+        host: req.hostname,
+        hasId: Boolean(body.id),
+        hasAuthDate: Boolean(body.auth_date),
+        hasHash: Boolean(body.hash),
+      });
+      return res.status(400).json({ success: false, error: verification.code });
+    }
+
+    console.info('[TelegramAuth] verify accepted', {
+      userId: body.id,
+      username: body.username || null,
+      host: req.hostname,
+    });
+
+    return res.json({ success: true, user: verification.payload });
+  } catch (error) {
+    console.error('Telegram verify error:', error);
+    return res.status(500).json({ success: false, error: 'server_error' });
+  }
+});
+
+// GET /api/auth/telegram/callback
+router.get('/telegram/callback', (req: Request, res: Response) => {
+  try {
+    const rawQuery = req.query as Record<string, unknown>;
+    const input: Record<string, unknown> = {};
+
+    for (const [key, val] of Object.entries(rawQuery)) {
+      if (Array.isArray(val)) {
+        input[key] = typeof val[0] === 'string' ? val[0] : '';
+      } else if (typeof val === 'string') {
+        input[key] = val;
+      }
+    }
+
+    const getQueryValue = (key: string): string => {
+      const v = input[key];
+      return typeof v === 'string' ? v : '';
+    };
+
+    const resolveReturnUrl = (): URL => {
+      const fallback = new URL(APP_URL);
+      const rawReturnTo = getQueryValue('return_to');
+      if (!rawReturnTo) return fallback;
+
+      try {
+        const parsed = new URL(rawReturnTo);
+        const allowedHosts = new Set<string>([
+          fallback.hostname,
+          req.hostname,
+          fallback.hostname.startsWith('www.') ? fallback.hostname.slice(4) : `www.${fallback.hostname}`,
+        ]);
+
+        if (parsed.protocol === 'https:' && allowedHosts.has(parsed.hostname)) {
+          return parsed;
+        }
+      } catch {
+        // Ignore malformed return_to and fallback to APP_URL.
+      }
+
+      return fallback;
+    };
+
+    const redirectWithError = (code: string): void => {
+      const errorUrl = resolveReturnUrl();
+      errorUrl.searchParams.set('tgAuthError', code);
+      console.warn('[TelegramAuth] callback rejected', {
+        code,
+        host: req.hostname,
+        returnTo: getQueryValue('return_to') || null,
+        hasId: Boolean(getQueryValue('id')),
+        hasAuthDate: Boolean(getQueryValue('auth_date')),
+        hasHash: Boolean(getQueryValue('hash')),
+      });
+      res.redirect(errorUrl.toString());
+    };
+
+    const verification = verifyTelegramAuthData(input);
+    if (!verification.success) {
+      redirectWithError(verification.code);
+      return;
+    }
+
+    const tgAuthResult = Buffer.from(JSON.stringify(verification.payload), 'utf8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+
+    const successUrl = resolveReturnUrl();
+    successUrl.searchParams.delete('tgAuthError');
+    successUrl.searchParams.delete('tgAuthResult');
+    successUrl.hash = `tgAuthResult=${tgAuthResult}`;
+    console.info('[TelegramAuth] callback accepted', {
+      userId: input.id,
+      username: input.username || null,
+      host: req.hostname,
+      returnTo: getQueryValue('return_to') || null,
+    });
+    return res.redirect(successUrl.toString());
+  } catch (error) {
+    console.error('Telegram callback error:', error);
+    const errorUrl = new URL(APP_URL);
+    errorUrl.searchParams.set('tgAuthError', 'server_error');
+    return res.redirect(errorUrl.toString());
+  }
+});
+
 // POST /api/auth/register
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerLimiter, async (req: Request, res: Response) => {
   try {
     const { email, password, name } = req.body;
 
@@ -199,11 +572,10 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     // Проверка: email уже существует?
-    const existing = Array.from(USERS_DB.values()).find(
-      (u) => u.email.toLowerCase() === email.toLowerCase()
-    );
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingRow = findUserByEmail.get(normalizedEmail);
     
-    if (existing) {
+    if (existingRow) {
       return res.status(409).json({ success: false, error: 'Email уже зарегистрирован' });
     }
 
@@ -214,8 +586,8 @@ router.post('/register', async (req: Request, res: Response) => {
     // Создание пользователя
     const newUser: UserDocument = {
       id: `usr-${Date.now()}`,
-      email: email.toLowerCase(),
-      name,
+      email: normalizedEmail,
+      name: name.trim(),
       passwordHash,
       emailVerified: false,
       verificationToken,
@@ -225,7 +597,25 @@ router.post('/register', async (req: Request, res: Response) => {
       createdAt: new Date().toISOString(),
     };
 
-    USERS_DB.set(newUser.id, newUser);
+    try {
+      insertUser.run(
+        newUser.id,
+        newUser.email,
+        newUser.name,
+        newUser.passwordHash,
+        0,
+        newUser.verificationToken,
+        newUser.verificationTokenExpiry,
+        0,
+        newUser.status,
+        newUser.createdAt
+      );
+    } catch (error: any) {
+      if (String(error?.message).includes('UNIQUE')) {
+        return res.status(409).json({ success: false, error: 'Email уже зарегистрирован' });
+      }
+      throw error;
+    }
 
     // Отправка письма подтверждения
     try {
@@ -256,11 +646,8 @@ router.post('/verify-email', async (req: Request, res: Response) => {
     }
 
     // Поиск пользователя с этим токеном
-    const user = Array.from(USERS_DB.values()).find(
-      (u) => u.verificationToken === token && 
-             u.verificationTokenExpiry && 
-             u.verificationTokenExpiry > Date.now()
-    );
+    const row = findUserByVerificationToken.get(token, Date.now());
+    const user = row ? mapUser(row) : null;
 
     if (!user) {
       return res.status(400).json({ success: false, error: 'Невалидный или истёкший токен' });
@@ -270,6 +657,7 @@ router.post('/verify-email', async (req: Request, res: Response) => {
     user.emailVerified = true;
     user.verificationToken = undefined;
     user.verificationTokenExpiry = undefined;
+    saveUser(user);
 
     return res.json({
       success: true,
@@ -291,9 +679,8 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
     }
 
     // Поиск пользователя
-    const user = Array.from(USERS_DB.values()).find(
-      (u) => u.email.toLowerCase() === email.toLowerCase()
-    );
+    const row = findUserByEmail.get(email.trim().toLowerCase());
+    const user = row ? mapUser(row) : null;
 
     if (!user) {
       return res.status(401).json({ success: false, error: 'Неверные учетные данные' });
@@ -319,6 +706,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
         user.lockUntil = Date.now() + 15 * 60 * 1000; // 15 минут блокировки
       }
 
+      saveUser(user);
       return res.status(401).json({ success: false, error: 'Неверные учетные данные' });
     }
 
@@ -326,8 +714,13 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
     user.loginAttempts = 0;
     user.lockUntil = undefined;
     user.lastLoginAt = new Date().toISOString();
+    saveUser(user);
 
     // Создание токенов
+    if (!user.emailVerified) {
+      return res.status(403).json({ success: false, error: 'Сначала подтвердите email' });
+    }
+
     const accessToken = generateToken(user.id, JWT_SECRET, '1h');
     const refreshToken = generateToken(user.id, JWT_REFRESH_SECRET, '7d');
 
@@ -374,7 +767,7 @@ router.post('/logout', (req: Request, res: Response) => {
 });
 
 // POST /api/auth/forgot-password
-router.post('/forgot-password', async (req: Request, res: Response) => {
+router.post('/forgot-password', recoveryLimiter, async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
 
@@ -383,9 +776,8 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     }
 
     // Поиск пользователя
-    const user = Array.from(USERS_DB.values()).find(
-      (u) => u.email.toLowerCase() === email.toLowerCase()
-    );
+    const row = findUserByEmail.get(email.trim().toLowerCase());
+    const user = row ? mapUser(row) : null;
 
     // ⚠️ Не раскрываем, существует ли пользователь (security best practice)
     if (!user) {
@@ -399,6 +791,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     const resetToken = generateVerificationToken();
     user.resetToken = resetToken;
     user.resetTokenExpiry = Date.now() + 1 * 60 * 60 * 1000; // 1 час
+    saveUser(user);
 
     // Отправка письма
     try {
@@ -418,7 +811,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
 });
 
 // POST /api/auth/reset-password
-router.post('/reset-password', async (req: Request, res: Response) => {
+router.post('/reset-password', recoveryLimiter, async (req: Request, res: Response) => {
   try {
     const { token, password } = req.body;
 
@@ -431,11 +824,8 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     }
 
     // Поиск пользователя с этим токеном
-    const user = Array.from(USERS_DB.values()).find(
-      (u) => u.resetToken === token && 
-             u.resetTokenExpiry && 
-             u.resetTokenExpiry > Date.now()
-    );
+    const row = findUserByResetToken.get(token, Date.now());
+    const user = row ? mapUser(row) : null;
 
     if (!user) {
       return res.status(400).json({ success: false, error: 'Невалидный или истёкший токен' });
@@ -446,6 +836,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     user.resetToken = undefined;
     user.resetTokenExpiry = undefined;
     user.loginAttempts = 0; // Сброс попыток входа
+    saveUser(user);
 
     return res.json({
       success: true,
@@ -485,7 +876,8 @@ router.post('/refresh', (req: Request, res: Response) => {
 
 // GET /api/auth/me (требует аутентификации)
 router.get('/me', authenticateToken, (req: Request & { userId?: string }, res: Response) => {
-  const user = USERS_DB.get(req.userId!);
+  const row = findUserById.get(req.userId!);
+  const user = row ? mapUser(row) : null;
 
   if (!user) {
     return res.status(404).json({ success: false, error: 'Пользователь не найден' });

@@ -119,7 +119,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   }
 
   const telegramHandle = currentUser.telegramId ? `@${currentUser.telegramId}` : currentUser.email || '@market_hedge';
-  const telegramIdValue = currentUser.telegramId || '7948060541';
+  const telegramIdValue = currentUser.telegramId || 'user';
 
   return (
     <div className="min-h-screen bg-[#f8fafc] py-8 px-4 sm:px-6 lg:px-8">

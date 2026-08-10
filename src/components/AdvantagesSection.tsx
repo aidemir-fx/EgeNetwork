@@ -64,7 +64,7 @@ export const AdvantagesSection: React.FC = () => {
               className="bg-white rounded-[28px] p-7 border border-slate-100/90 shadow-sm relative overflow-hidden hover:shadow-md transition-all duration-300 flex flex-col justify-between group"
             >
               {/* Top-Right Decorative Blob */}
-              <div className="absolute -top-10 -right-10 w-36 h-36 bg-[#FFE5D3] rounded-full pointer-events-none transition-transform group-hover:scale-110" />
+              <div className="absolute -top-5 -right-5 w-20 h-20 bg-[#FF6B35]/15 dark:bg-[#FF6B35]/25 rounded-full pointer-events-none transition-transform group-hover:scale-125" />
 
               <div className="relative space-y-4 z-10">
                 {/* Number Badge */}

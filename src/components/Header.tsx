@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingBag, Menu, X, ShieldCheck, LogOut, User as UserIcon, LayoutDashboard } from 'lucide-react';
+import { ShoppingBag, Menu, X, ShieldCheck, LogOut, User as UserIcon, LayoutDashboard, Sun, Moon } from 'lucide-react';
 import { PageType, User } from '../types';
 import logoImage from '../assets/images/logo.jpg';
 
@@ -12,6 +12,8 @@ interface HeaderProps {
   onOpenHowItWorks?: () => void;
   currentUser: User | null;
   onLogout: () => void;
+  theme?: 'light' | 'dark';
+  onToggleTheme?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,6 +25,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenHowItWorks,
   currentUser,
   onLogout,
+  theme = 'light',
+  onToggleTheme,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
@@ -155,6 +159,23 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </button>
 
+          {/* Theme Toggle Button */}
+          {onToggleTheme && (
+            <button
+              onClick={onToggleTheme}
+              id="header-theme-btn"
+              className="p-2 sm:p-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all cursor-pointer border border-slate-200/80 flex items-center justify-center"
+              title={theme === 'dark' ? 'Дневная тема' : 'Ночная тема'}
+              aria-label="Переключить тему"
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4 text-amber-400 fill-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-slate-700" />
+              )}
+            </button>
+          )}
+
           {/* User Auth Info or Login Button */}
           {currentUser ? (
             <div className="hidden sm:flex items-center gap-2 bg-slate-100 p-1.5 pl-3 rounded-full border border-slate-200/80 text-xs font-bold text-slate-800">
@@ -234,6 +255,21 @@ export const Header: React.FC<HeaderProps> = ({
             <LayoutDashboard className="w-5 h-5" />
             <span>Личный кабинет</span>
           </button>
+
+          {onToggleTheme && (
+            <button
+              onClick={onToggleTheme}
+              className="w-full text-left px-4 py-2.5 rounded-xl text-base font-bold flex items-center justify-between bg-slate-100 text-slate-800 cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                {theme === 'dark' ? <Sun className="w-5 h-5 text-amber-400 fill-amber-400" /> : <Moon className="w-5 h-5 text-slate-700" />}
+                <span>{theme === 'dark' ? 'Дневная тема' : 'Ночная тема'}</span>
+              </div>
+              <span className="text-xs text-slate-500 font-normal">
+                {theme === 'dark' ? 'Включена ночная' : 'Включена светлая'}
+              </span>
+            </button>
+          )}
 
           <button
             onClick={() => handleNav('catalog')}

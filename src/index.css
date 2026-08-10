@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 @import "./components/player/playerStyles.css";
 
 @keyframes fadeIn {
@@ -17,5 +18,141 @@
 
 .animate-slideUp {
   animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ============================================
+   DARK MODE SYSTEM STYLES
+   ============================================ */
+
+html.dark {
+  color-scheme: dark;
+  background-color: #0b0f19;
+  color: #f1f5f9;
+}
+
+html.dark body {
+  background-color: #0b0f19;
+  color: #f1f5f9;
+}
+
+/* Header & Sticky Elements */
+html.dark header,
+html.dark nav,
+html.dark footer {
+  background-color: rgba(15, 23, 42, 0.95) !important;
+  border-color: #1e293b !important;
+}
+
+/* Background overrides */
+html.dark .bg-slate-50,
+html.dark .bg-slate-50\/60,
+html.dark .bg-slate-50\/80 {
+  background-color: #0b0f19 !important;
+}
+
+html.dark .bg-white,
+html.dark .bg-white\/98,
+html.dark .bg-white\/95,
+html.dark .bg-white\/90,
+html.dark .bg-white\/80 {
+  background-color: #151d2a !important;
+  color: #f1f5f9 !important;
+}
+
+html.dark .bg-slate-100,
+html.dark .bg-slate-100\/60,
+html.dark .bg-slate-100\/80 {
+  background-color: #1e293b !important;
+  color: #f1f5f9 !important;
+}
+
+/* Borders */
+html.dark .border-slate-100,
+html.dark .border-slate-200,
+html.dark .border-slate-200\/80,
+html.dark .border-slate-200\/50,
+html.dark .border-slate-300 {
+  border-color: #243044 !important;
+}
+
+/* Text Overrides */
+html.dark .text-slate-900,
+html.dark .text-slate-800,
+html.dark .text-slate-700 {
+  color: #f8fafc !important;
+}
+
+html.dark .text-slate-600,
+html.dark .text-slate-500 {
+  color: #e2e8f0 !important;
+}
+
+html.dark .text-slate-400 {
+  color: #cbd5e1 !important;
+}
+
+/* Gradient Overrides for Dark Mode */
+html.dark .via-white {
+  background-color: transparent !important;
+}
+
+html.dark .bg-gradient-to-b {
+  background-image: linear-gradient(to bottom, #0b0f19, #151d2a, #0b0f19) !important;
+}
+
+/* Inputs & Form Controls */
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: #1a2332 !important;
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+
+html.dark input::placeholder {
+  color: #64748b !important;
+}
+
+/* Pills & Accent backgrounds in Dark Mode */
+html.dark .bg-\[\#FFF1E8\] {
+  background-color: rgba(255, 107, 53, 0.18) !important;
+  color: #ff8c5a !important;
+}
+
+html.dark .bg-\[\#E8F8EC\] {
+  background-color: rgba(34, 197, 94, 0.18) !important;
+  color: #4ade80 !important;
+}
+
+html.dark .bg-\[\#EBF3FF\] {
+  background-color: rgba(59, 130, 246, 0.18) !important;
+  color: #60a5fa !important;
+}
+
+html.dark .bg-\[\#FFE5D3\] {
+  background-color: rgba(255, 107, 53, 0.2) !important;
+}
+
+html.dark .from-\[\#EFF9F2\],
+html.dark .via-\[\#F3FAF5\],
+html.dark .to-\[\#EBF6EE\] {
+  background-color: #151d2a !important;
+  background-image: none !important;
+}
+
+html.dark .text-\[\#973E1A\] {
+  color: #ff9d71 !important;
+}
+
+/* Modals, Drawers & Shadows in Dark Mode */
+html.dark .shadow-2xl,
+html.dark .shadow-xl,
+html.dark .shadow-lg,
+html.dark .shadow-md {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5) !important;
+}
+
+html.dark .bg-slate-950\/70 {
+  background-color: rgba(2, 6, 23, 0.85) !important;
 }
 
