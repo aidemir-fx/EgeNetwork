@@ -1,0 +1,183 @@
+openapi: 3.1.1
+info:
+  title: External Content API
+  description: API for reading and playing course module materials from external systems
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api
+
+paths:
+  /external/courses/{courseId}/modules/{moduleId}/materials:
+    get:
+      summary: Get playback and download links for course module materials
+      operationId: getExternalCourseModuleMaterials
+      security:
+        - ApiKeyAuth: [ ]
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+          description: Course identifier
+        - name: moduleId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+          description: Module identifier mapped to a lesson identifier in admin-back
+      responses:
+        '200':
+          description: Playback and presigned download links
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalCourseModuleMaterialsResponse'
+        '400':
+          description: Invalid path identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalContentDefaultError'
+        '401':
+          description: API key is missing or invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalContentDefaultError'
+        '404':
+          description: Course module not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalContentDefaultError'
+
+  /external/videos/{id}/playback:
+    get:
+      summary: Get an API-key authenticated HLS object for a READY video
+      operationId: getExternalVideoPlaybackObject
+      security:
+        - ApiKeyAuth: [ ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+          description: Unique identifier of the video
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+            default: master.m3u8
+          description: HLS object path relative to the video HLS directory
+      responses:
+        '200':
+          description: HLS playlist or segment
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                format: binary
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Video is not ready for playback
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalContentDefaultError'
+        '401':
+          description: API key is missing or invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalContentDefaultError'
+        '404':
+          description: Video or playback object not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalContentDefaultError'
+
+components:
+  schemas:
+    ExternalCourseModuleMaterialsResponse:
+      type: object
+      properties:
+        course_id:
+          type: integer
+          format: int32
+          description: Course identifier
+        module_id:
+          type: integer
+          format: int32
+          description: Module identifier
+        videos:
+          type: array
+          description: API-key authenticated backend playback URLs of READY videos
+          items:
+            type: string
+            format: uri
+        files:
+          type: array
+          description: Ready files with their purpose and presigned direct S3 URL
+          items:
+            $ref: '#/components/schemas/ExternalCourseModuleFileResponse'
+      required:
+        - course_id
+        - module_id
+        - videos
+        - files
+
+    ExternalCourseModuleFileResponse:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Presigned direct S3 URL of the ready file
+        file_type:
+          $ref: '#/components/schemas/ExternalLessonFileType'
+      required:
+        - url
+        - file_type
+
+    ExternalLessonFileType:
+      type: string
+      description: Purpose of a file inside the lesson
+      enum:
+        - MATERIAL
+        - HOMEWORK
+
+    ExternalContentDefaultError:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Error message
+      required:
+        - code
+        - message
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

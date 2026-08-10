@@ -1,0 +1,6 @@
+{
+  "name": "EGE NETWORK - Курсы ЕГЭ и ОГЭ",
+  "description": "Каталог курсов подготовки к ЕГЭ и ОГЭ от топовых онлайн-школ, бесплатные материалы, отзывы учеников и удобная корзина.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

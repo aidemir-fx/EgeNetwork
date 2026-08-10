@@ -1,0 +1,25 @@
+{
+	"name": "aliceege-player",
+	"private": true,
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"lint": "tsc --noEmit",
+		"build": "tsc --noEmit && vite build",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"@vidstack/react": "1.15.2",
+		"hls.js": "1.6.16",
+		"lucide-react": "1.17.0",
+		"react": "19.2.6",
+		"react-dom": "19.2.6"
+	},
+	"devDependencies": {
+		"@types/react": "19.2.15",
+		"@types/react-dom": "19.2.3",
+		"typescript": "6.0.3",
+		"vite": "8.0.14"
+	}
+}
