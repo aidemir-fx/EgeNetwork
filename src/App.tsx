@@ -5,6 +5,8 @@ import { CatalogSection } from './components/CatalogSection';
 import { EgePage } from './components/EgePage';
 import { ReviewsPage } from './components/ReviewsPage';
 import { AdminPage } from './components/AdminPage';
+import { DashboardPage } from './components/DashboardPage';
+import { HowItWorksModal } from './components/HowItWorksModal';
 import { CartDrawer } from './components/CartDrawer';
 import { AuthModal } from './components/AuthModal';
 import { Footer } from './components/Footer';
@@ -14,17 +16,16 @@ import { AliceEgePlayerModal } from './components/AliceEgePlayerModal';
 import { getCurrentUser, setCurrentUser as saveCurrentUser } from './utils/adminAuth';
 import { setupTokenRefresh, stopTokenRefresh } from './utils/auth-api-client';
 
-
 export default function App() {
   const [activePage, setActivePage] = useState<PageType>('catalog');
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
+  const [isHowItWorksOpen, setIsHowItWorksOpen] = useState<boolean>(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState<boolean>(false);
   const [legalModalType, setLegalModalType] = useState<'privacy' | 'terms' | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(() => getCurrentUser());
-
 
   // Инициализация автоматического обновления токена
   useEffect(() => {
@@ -61,19 +62,20 @@ export default function App() {
     setCurrentUser(null);
     saveCurrentUser(null);
     showToast('Вы вышли из системы');
-    if (activePage === 'admin') {
+    if (activePage === 'admin' || activePage === 'dashboard') {
       setActivePage('catalog');
     }
   };
 
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
-    // If admin role, automatically switch to admin page or remain on current
+    showToast(`С возвращением, ${user.name || 'ученик'}!`);
+    setActivePage('dashboard');
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 selection:bg-emerald-500 selection:text-white">
-      {/* Sticky Header (Hidden on admin full page view if preferred, or visible with top bar) */}
+      {/* Sticky Header */}
       {activePage !== 'admin' && (
         <Header
           activePage={activePage}
@@ -81,12 +83,11 @@ export default function App() {
           cartCount={cartItems.length}
           onOpenCart={() => setIsCartOpen(true)}
           onOpenAuthModal={() => setIsAuthOpen(true)}
-          onOpenPlayer={() => setIsPlayerOpen(true)}
+          onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
           currentUser={currentUser}
           onLogout={handleLogout}
         />
       )}
-
 
       {/* Main Content Render */}
       <main className="flex-1">
@@ -96,6 +97,7 @@ export default function App() {
             onAddToCart={handleAddToCart}
             onOpenCart={() => setIsCartOpen(true)}
             onOpenAuthModal={() => setIsAuthOpen(true)}
+            onOpenHowItWorks={() => setIsHowItWorksOpen(true)}
             showToast={showToast}
             setActivePage={setActivePage}
           />
@@ -113,6 +115,16 @@ export default function App() {
 
         {activePage === 'reviews' && <ReviewsPage />}
 
+        {activePage === 'dashboard' && (
+          <DashboardPage
+            currentUser={currentUser}
+            onOpenAuthModal={() => setIsAuthOpen(true)}
+            onLogout={handleLogout}
+            setActivePage={setActivePage}
+            showToast={showToast}
+          />
+        )}
+
         {activePage === 'admin' && (
           <AdminPage
             currentUser={currentUser}
@@ -122,7 +134,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer (Hidden on Admin page) */}
+      {/* Footer */}
       {activePage !== 'admin' && (
         <Footer
           setActivePage={setActivePage}
@@ -148,6 +160,16 @@ export default function App() {
         onClose={() => setIsAuthOpen(false)}
         showToast={showToast}
         onLoginSuccess={handleLoginSuccess}
+      />
+
+      {/* How It Works Visual Modal */}
+      <HowItWorksModal
+        isOpen={isHowItWorksOpen}
+        onClose={() => setIsHowItWorksOpen(false)}
+        onGoToDashboard={() => {
+          setActivePage('dashboard');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
 
       {/* Legal Privacy/Terms Modal */}

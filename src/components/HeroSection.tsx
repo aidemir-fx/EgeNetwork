@@ -33,17 +33,17 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             </p>
 
             {/* CTA Buttons */}
-            <div className="flex flex-col sm:flex-row items-center gap-3.5 pt-2">
+            <div className="flex flex-row items-center gap-2.5 sm:gap-3.5 pt-2 w-full">
               <button
                 onClick={onSelectCourseClick}
-                className="w-full sm:w-64 py-4 px-8 rounded-2xl bg-[#FF6B35] hover:bg-[#E65A22] text-white font-black text-base shadow-lg shadow-[#FF6B35]/30 hover:scale-[1.02] active:scale-[0.98] transition-all text-center"
+                className="flex-1 sm:w-64 py-3.5 sm:py-4 px-2.5 sm:px-8 rounded-2xl bg-[#FF6B35] hover:bg-[#E65A22] text-white font-black text-xs sm:text-base shadow-lg shadow-[#FF6B35]/30 hover:scale-[1.02] active:scale-[0.98] transition-all text-center whitespace-nowrap cursor-pointer"
               >
                 Выбрать курс
               </button>
 
               <button
                 onClick={onReviewsClick}
-                className="w-full sm:w-64 py-4 px-8 rounded-2xl bg-[#FFF1E8] hover:bg-[#FFE3D6] text-[#973E1A] border border-[#FF6B35]/30 font-black text-base shadow-lg shadow-[#FF6B35]/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-center"
+                className="flex-1 sm:w-64 py-3.5 sm:py-4 px-2.5 sm:px-8 rounded-2xl bg-[#FFF1E8] hover:bg-[#FFE3D6] text-[#973E1A] border border-[#FF6B35]/30 font-black text-xs sm:text-base shadow-lg shadow-[#FF6B35]/10 hover:scale-[1.02] active:scale-[0.98] transition-all text-center whitespace-nowrap cursor-pointer"
               >
                 Как это работает
               </button>

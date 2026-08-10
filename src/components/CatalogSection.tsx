@@ -28,6 +28,7 @@ interface CatalogSectionProps {
   onAddToCart: (item: Omit<CartItem, 'id'>) => void;
   onOpenCart?: () => void;
   onOpenAuthModal: () => void;
+  onOpenHowItWorks?: () => void;
   showToast: (msg: string) => void;
   setActivePage?: (page: PageType) => void;
 }
@@ -35,6 +36,7 @@ interface CatalogSectionProps {
 export const CatalogSection: React.FC<CatalogSectionProps> = ({
   examFilter,
   onAddToCart,
+  onOpenHowItWorks,
   showToast,
   setActivePage,
 }) => {
@@ -50,19 +52,16 @@ export const CatalogSection: React.FC<CatalogSectionProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const scrollToHowItWorks = () => {
-    const el = document.getElementById('how-it-works');
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
-
   return (
     <div>
-      {/* Top Hero Section matching reference design */}
+      {/* Top Hero Section */}
       <HeroSection
         onSelectCourseClick={openEgeCourses}
-        onReviewsClick={scrollToHowItWorks}
+        onReviewsClick={() => {
+          if (onOpenHowItWorks) {
+            onOpenHowItWorks();
+          }
+        }}
       />
 
       {/* Popular Schools Overview Section */}

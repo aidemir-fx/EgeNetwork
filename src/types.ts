@@ -1,4 +1,4 @@
-export type PageType = 'catalog' | 'ege' | 'reviews' | 'admin';
+export type PageType = 'catalog' | 'ege' | 'reviews' | 'admin' | 'dashboard';
 export type ExamType = 'EGE' | 'OGE';
 export type AcademicYear = '2027';
 export type AdminRole = 'admin' | 'manager' | 'moderator' | 'support';

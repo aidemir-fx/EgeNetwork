@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingBag, Send, Menu, X, Sparkles, ShieldCheck, LogOut, User as UserIcon, PlayCircle } from 'lucide-react';
+import { ShoppingBag, Menu, X, ShieldCheck, LogOut, User as UserIcon, LayoutDashboard } from 'lucide-react';
 import { PageType, User } from '../types';
 import logoImage from '../assets/images/logo.jpg';
 
@@ -9,7 +9,7 @@ interface HeaderProps {
   cartCount: number;
   onOpenCart: () => void;
   onOpenAuthModal: () => void;
-  onOpenPlayer?: () => void;
+  onOpenHowItWorks?: () => void;
   currentUser: User | null;
   onLogout: () => void;
 }
@@ -20,17 +20,24 @@ export const Header: React.FC<HeaderProps> = ({
   cartCount,
   onOpenCart,
   onOpenAuthModal,
-  onOpenPlayer,
+  onOpenHowItWorks,
   currentUser,
   onLogout,
 }) => {
-
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   const handleNav = (page: PageType) => {
     setActivePage(page);
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDashboardClick = () => {
+    if (!currentUser) {
+      onOpenAuthModal();
+    } else {
+      handleNav('dashboard');
+    }
   };
 
   const isAdmin = currentUser?.role && ['admin', 'manager', 'moderator', 'support'].includes(currentUser.role);
@@ -80,29 +87,30 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             <button
-              onClick={() => {
-                handleNav('catalog');
-                setTimeout(() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' }), 80);
-              }}
-              className={`px-4 py-1.5 rounded-full text-sm font-bold transition-all cursor-pointer ${
-                false
-                  ? 'bg-[#E8F8EC] text-[#2DB34D]'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              onClick={handleDashboardClick}
+              className={`px-4 py-1.5 rounded-full text-sm font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activePage === 'dashboard'
+                  ? 'bg-[#22c55e] text-white shadow-sm'
+                  : 'text-slate-700 hover:text-slate-900 hover:bg-white/50'
               }`}
+            >
+              <LayoutDashboard className="w-4 h-4" />
+              <span>Личный кабинет</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (onOpenHowItWorks) {
+                  onOpenHowItWorks();
+                } else {
+                  handleNav('catalog');
+                  setTimeout(() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' }), 80);
+                }
+              }}
+              className="px-4 py-1.5 rounded-full text-sm font-bold text-slate-600 hover:text-slate-900 hover:bg-white/50 transition-all cursor-pointer"
             >
               Как это работает
             </button>
-
-            {onOpenPlayer && (
-              <button
-                onClick={onOpenPlayer}
-                className="px-3.5 py-1.5 rounded-full text-sm font-extrabold text-purple-700 bg-purple-100 hover:bg-purple-200 border border-purple-300/60 transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                title="Плеер видеоуроков AliceEge"
-              >
-                <PlayCircle className="w-4 h-4 text-purple-600 fill-purple-200" />
-                <span>Плеер</span>
-              </button>
-            )}
           </nav>
 
         </div>
@@ -110,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Action Buttons */}
         <div className="flex items-center gap-3">
           
-          {/* Admin Panel Button - ONLY DISPLAYED IF AUTHORIZED ADMIN */}
+          {/* Admin Panel Button */}
           {isAdmin && (
             <button
               onClick={() => handleNav('admin')}
@@ -127,7 +135,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Cart Button (Always visible for all users) */}
+          {/* Cart Button */}
           <button
             onClick={onOpenCart}
             id="header-cart-btn"
@@ -149,9 +157,14 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* User Auth Info or Login Button */}
           {currentUser ? (
-            <div className="hidden sm:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200/80 text-xs font-bold text-slate-800">
-              <UserIcon className="w-3.5 h-3.5 text-[#FF6B35]" />
-              <span>{currentUser.telegramId ? `@${currentUser.telegramId}` : currentUser.name || currentUser.email}</span>
+            <div className="hidden sm:flex items-center gap-2 bg-slate-100 p-1.5 pl-3 rounded-full border border-slate-200/80 text-xs font-bold text-slate-800">
+              <button
+                onClick={handleDashboardClick}
+                className="flex items-center gap-1.5 hover:text-[#22c55e] transition-colors cursor-pointer"
+              >
+                <UserIcon className="w-3.5 h-3.5 text-[#22c55e]" />
+                <span>{currentUser.telegramId ? `@${currentUser.telegramId}` : currentUser.name || currentUser.email}</span>
+              </button>
               <button
                 onClick={onLogout}
                 title="Выйти"
@@ -188,7 +201,7 @@ export const Header: React.FC<HeaderProps> = ({
           {currentUser && (
             <div className="flex items-center justify-between bg-slate-100 p-3 rounded-xl mb-2 text-xs font-bold text-slate-800">
               <div className="flex items-center gap-2">
-                <UserIcon className="w-4 h-4 text-[#FF6B35]" />
+                <UserIcon className="w-4 h-4 text-[#22c55e]" />
                 <span>{currentUser.telegramId ? `@${currentUser.telegramId}` : currentUser.name || currentUser.email}</span>
               </div>
               <button
@@ -211,6 +224,17 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Панель Администратора</span>
             </button>
           )}
+
+          <button
+            onClick={handleDashboardClick}
+            className={`w-full text-left px-4 py-2.5 rounded-xl text-base font-bold flex items-center gap-2 ${
+              activePage === 'dashboard' ? 'bg-[#22c55e] text-white' : 'bg-slate-100 text-slate-800'
+            }`}
+          >
+            <LayoutDashboard className="w-5 h-5" />
+            <span>Личный кабинет</span>
+          </button>
+
           <button
             onClick={() => handleNav('catalog')}
             className={`w-full text-left px-4 py-2.5 rounded-xl text-base font-semibold ${
@@ -228,23 +252,15 @@ export const Header: React.FC<HeaderProps> = ({
             Курсы ЕГЭ 2027
           </button>
 
-          {onOpenPlayer && (
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onOpenPlayer();
-              }}
-              className="w-full text-left px-4 py-2.5 rounded-xl text-base font-bold text-purple-700 bg-purple-100 flex items-center gap-2 border border-purple-200"
-            >
-              <PlayCircle className="w-5 h-5 text-purple-600 fill-purple-200" />
-              <span>AliceEge Видеоплеер</span>
-            </button>
-          )}
-
           <button
             onClick={() => {
-              handleNav('catalog');
-              setTimeout(() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' }), 80);
+              setMobileMenuOpen(false);
+              if (onOpenHowItWorks) {
+                onOpenHowItWorks();
+              } else {
+                handleNav('catalog');
+                setTimeout(() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' }), 80);
+              }
             }}
             className="w-full text-left px-4 py-2.5 rounded-xl text-base font-semibold text-slate-700"
           >
