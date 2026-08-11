@@ -14,7 +14,7 @@ import { Toast } from './components/Toast';
 import { LegalModal } from './components/LegalModal';
 import { AliceEgePlayerModal } from './components/AliceEgePlayerModal';
 import { checkAdminByTelegramId, getCurrentUser, setCurrentUser as saveCurrentUser } from './utils/adminAuth';
-import { setupTokenRefresh, stopTokenRefresh } from './utils/auth-api-client';
+import { authAPI, setupTokenRefresh, stopTokenRefresh } from './utils/auth-api-client';
 
 export default function App() {
   const [activePage, setActivePage] = useState<PageType>('catalog');
@@ -55,6 +55,24 @@ export default function App() {
   useEffect(() => {
     setupTokenRefresh();
     return () => stopTokenRefresh();
+  }, []);
+
+  // Обработка токенов подтверждения email из URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verifyToken = params.get('verify');
+    if (verifyToken) {
+      authAPI.verifyEmail(verifyToken).then((res) => {
+        if (res.success) {
+          showToast('Email успешно подтвержден!');
+        } else {
+          showToast(res.error || 'Ошибка подтверждения email');
+        }
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('verify');
+        window.history.replaceState(null, '', cleanUrl.toString());
+      });
+    }
   }, []);
 
   useEffect(() => {

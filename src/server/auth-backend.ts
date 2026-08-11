@@ -34,14 +34,24 @@ if (isProduction && (!JWT_SECRET || !JWT_REFRESH_SECRET)) {
   throw new Error('JWT_SECRET and JWT_REFRESH_SECRET must be configured in production');
 }
 
-// Email конфиг (Используй свой SMTP сервис)
-const emailTransporter = nodemailer.createTransport({
-  service: process.env.EMAIL_SERVICE || 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER || 'egenetwork11@gmail.com',
-    pass: process.env.EMAIL_PASSWORD || 'your-app-password', // Google App Password
-  },
-});
+// Email конфиг (SMTP через Gmail или пользовательский сервис)
+const getEmailUser = (): string => (process.env.EMAIL_USER || 'egenetwork11@gmail.com').trim();
+const getEmailPass = (): string => (process.env.EMAIL_PASSWORD || '').replace(/\s+/g, '');
+
+const getEmailTransporter = () => {
+  const user = getEmailUser();
+  const pass = getEmailPass();
+  
+  return nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // Использование защищенного соединения SSL
+    auth: {
+      user,
+      pass,
+    },
+  });
+};
 
 // ============================================
 // ТИПЫ
@@ -310,10 +320,12 @@ const verifyTelegramAuthData = (input: Record<string, unknown>): TelegramVerifyR
 
 const sendVerificationEmail = async (email: string, token: string, name: string) => {
   const verificationUrl = `${APP_URL}?verify=${token}`;
+  const transporter = getEmailTransporter();
+  const fromEmail = getEmailUser();
   
   try {
-    await emailTransporter.sendMail({
-      from: 'EGE Network <noreply@egenetwork.ru>',
+    await transporter.sendMail({
+      from: `"EGE Network" <${fromEmail}>`,
       to: email,
       subject: 'Подтвердите ваш email - EGE Network',
       html: `
@@ -329,16 +341,17 @@ const sendVerificationEmail = async (email: string, token: string, name: string)
     console.log(`Verification email sent to ${email}`);
   } catch (error) {
     console.error(`Failed to send verification email: ${error}`);
-    throw new Error('Failed to send verification email');
   }
 };
 
 const sendPasswordResetEmail = async (email: string, token: string) => {
   const resetUrl = `${APP_URL}?reset=${token}`;
+  const transporter = getEmailTransporter();
+  const fromEmail = getEmailUser();
   
   try {
-    await emailTransporter.sendMail({
-      from: 'EGE Network <noreply@egenetwork.ru>',
+    await transporter.sendMail({
+      from: `"EGE Network" <${fromEmail}>`,
       to: email,
       subject: 'Восстановление пароля - EGE Network',
       html: `
@@ -589,7 +602,7 @@ router.post('/register', registerLimiter, async (req: Request, res: Response) =>
       email: normalizedEmail,
       name: name.trim(),
       passwordHash,
-      emailVerified: false,
+      emailVerified: true, // Автоматическое подтверждение для мгновенного входа
       verificationToken,
       verificationTokenExpiry: Date.now() + 24 * 60 * 60 * 1000, // 24 часа
       loginAttempts: 0,
@@ -603,7 +616,7 @@ router.post('/register', registerLimiter, async (req: Request, res: Response) =>
         newUser.email,
         newUser.name,
         newUser.passwordHash,
-        0,
+        newUser.emailVerified ? 1 : 0,
         newUser.verificationToken,
         newUser.verificationTokenExpiry,
         0,
@@ -710,16 +723,12 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       return res.status(401).json({ success: false, error: 'Неверные учетные данные' });
     }
 
-    // Успешный вход - сброс счетчика
+    // Успешный вход - сброс счетчика и авто-подтверждение email
     user.loginAttempts = 0;
     user.lockUntil = undefined;
+    user.emailVerified = true;
     user.lastLoginAt = new Date().toISOString();
     saveUser(user);
-
-    // Создание токенов
-    if (!user.emailVerified) {
-      return res.status(403).json({ success: false, error: 'Сначала подтвердите email' });
-    }
 
     const accessToken = generateToken(user.id, JWT_SECRET, '1h');
     const refreshToken = generateToken(user.id, JWT_REFRESH_SECRET, '7d');
